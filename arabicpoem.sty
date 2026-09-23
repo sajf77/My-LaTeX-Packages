@@ -1,0 +1,286 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{arabpoem}[2026/09/21 Arabic poems: hemistichs side by side or stacked]
+
+\RequirePackage{expl3}
+\RequirePackage{l3keys2e}
+
+\ExplSyntaxOn
+
+% ---------------------------------------------------------------------------
+% Variables
+% ---------------------------------------------------------------------------
+\int_new:N  \l__poem_count_int          % number of the current verse
+\dim_new:N  \l__poem_width_dim          % `width' key (0pt = full line)
+\dim_new:N  \l__poem_w_dim              % actual width of the poem block
+\dim_new:N  \l__poem_hw_dim             % width of one hemistich
+\dim_new:N  \l__poem_gap_dim            % gap between the hemistichs
+\dim_new:N  \l__poem_numsep_dim         % distance of a verse number from the text
+\int_new:N  \l__poem_numbering_int      % number every n-th verse (0 = never)
+\bool_new:N \l__poem_keep_bool          % keep the whole poem on one page if possible
+\bool_new:N \l__poem_swap_bool          % swap the hemistichs (see `swap')
+\str_new:N  \l__poem_numpos_str         % end | start: where the verse number goes
+\bool_new:N \l__poem_strut_bool         % uniform row height (see `strut')
+\str_new:N  \l__poem_layout_str         % hemistichs | stacked
+\str_new:N  \l__poem_align_str          % justify | center | start
+\tl_new:N   \l__poem_ornament_tl        % material in the gap between hemistichs
+\tl_new:N   \l__poem_numfmt_tl          % number format, e.g. \arabic*
+\tl_new:N   \l__poem_versesep_tl        % extra space between verses (glue)
+\tl_new:N   \l__poem_stanzasep_tl       % extra space at \stanzabreak (glue)
+\box_new:N  \l__poem_a_box              % first hemistich  (sadr)
+\box_new:N  \l__poem_b_box              % second hemistich (ajuz)
+
+% ---------------------------------------------------------------------------
+% Options: package options, \poemsetup{...}, \begin{arabpoem}[...]
+%
+%   layout     = hemistichs | stacked   (default hemistichs)
+%   align      = justify | center | start   (default justify)
+%   gap        = <length>               gap between hemistichs   (2em)
+%   ornament   = <material>             centred in that gap      (empty)
+%   width      = <length>               width of the poem block  (full line)
+%   versesep   = <glue>                 extra space between verses   (0pt)
+%   stanzasep  = <glue>                 extra space for \stanzabreak (1\baselineskip)
+%   numbering  = <n>                    number every n-th verse  (0 = off)
+%   numfmt     = <template>             \arabic* \Arabic* \roman* \hindi* \persian* ...
+%   numsep     = <length>               distance of the number from the text (1em)
+%   keep       = true | false           avoid page breaks inside the poem
+%   strut      = true | false           every line has the height of a normal
+%                                       text line, whatever the diacritics do (true)
+%   numpos     = end | start            side of the verse number (default end)
+%   swap       = true | false           exchange the two hemistichs (see below)
+%
+% Order of the parts.  The first hemistich is written first and the verse
+% number last; the text direction of the surrounding paragraph decides where
+% they end up.  In a right-to-left paragraph the first hemistich is therefore
+% on the right and the number on the left, in a left-to-right one the other
+% way round.  `numpos=start' puts the number at the other end, and `swap'
+% exchanges the hemistichs if your setup puts them on the wrong sides.
+% ---------------------------------------------------------------------------
+\keys_define:nn { arabpoem }
+  {
+    layout    .choices:nn = { hemistichs , stacked }
+                            { \str_set:Nx \l__poem_layout_str { \l_keys_choice_tl } } ,
+    layout    .initial:n  = hemistichs ,
+    align     .choices:nn = { justify , center , start }
+                            { \str_set:Nx \l__poem_align_str { \l_keys_choice_tl } } ,
+    align     .initial:n  = justify ,
+    gap       .dim_set:N  = \l__poem_gap_dim ,
+    gap       .initial:n  = 2em ,
+    ornament  .tl_set:N   = \l__poem_ornament_tl ,
+    ornament  .initial:n  = { } ,
+    width     .dim_set:N  = \l__poem_width_dim ,
+    width     .initial:n  = 0pt ,
+    versesep  .tl_set:N   = \l__poem_versesep_tl ,
+    versesep  .initial:n  = { 0pt } ,
+    stanzasep .tl_set:N   = \l__poem_stanzasep_tl ,
+    stanzasep .initial:n  = { 1 \baselineskip } ,
+    numbering .int_set:N  = \l__poem_numbering_int ,
+    numbering .initial:n  = 0 ,
+    numfmt    .tl_set:N   = \l__poem_numfmt_tl ,
+    numfmt    .initial:n  = { \arabic * } ,
+    numsep    .dim_set:N  = \l__poem_numsep_dim ,
+    numsep    .initial:n  = 1em ,
+    keep      .bool_set:N = \l__poem_keep_bool ,
+    keep      .default:n  = true ,
+    numpos    .choices:nn = { end , start }
+                            { \str_set:Nx \l__poem_numpos_str { \l_keys_choice_tl } } ,
+    numpos    .initial:n  = end ,
+    swap      .bool_set:N = \l__poem_swap_bool ,
+    swap      .default:n  = true ,
+    strut     .bool_set:N = \l__poem_strut_bool ,
+    strut     .initial:n  = true ,
+    strut     .default:n  = true ,
+  }
+\ProcessKeysPackageOptions { arabpoem }
+
+% Use \poemsetup, not a package option, for a `numfmt' containing \arabic*
+% and the like: LaTeX expands package options before this file sees them.
+\NewDocumentCommand { \poemsetup } { m }
+  {
+    \keys_set:nn { arabpoem } { #1 }
+  }
+
+% ---------------------------------------------------------------------------
+% Verse numbers.  `*' stands for the number in the style of the command.
+% \hindi* and \persian* give Eastern Arabic-Indic / Persian digits; they need
+% XeLaTeX or LuaLaTeX and a font that has those digits.
+% ---------------------------------------------------------------------------
+\cs_new_protected:Npn \__poem_digits:nn #1#2
+  {
+    \str_set:Nx \l_tmpa_str { \int_to_arabic:n { #2 } }
+    \str_map_function:NN \l_tmpa_str \__poem_digit_map:n
+  }
+\cs_new_protected:Npn \__poem_digit_map:n #1
+  {
+    \tex_char:D \int_eval:n { \l__poem_digit_base_int + #1 } \scan_stop:
+  }
+\int_new:N \l__poem_digit_base_int
+
+\cs_new_protected:Npn \__poem_number:n #1
+  {
+    \group_begin:
+      \cs_set:Npn \arabic  * { \int_to_arabic:n { #1 } }
+      \cs_set:Npn \Arabic  * { \int_to_arabic:n { #1 } }
+      \cs_set:Npn \alph    * { \int_to_alph:n   { #1 } }
+      \cs_set:Npn \Alph    * { \int_to_Alph:n   { #1 } }
+      \cs_set:Npn \roman   * { \int_to_roman:n  { #1 } }
+      \cs_set:Npn \Roman   * { \int_to_Roman:n  { #1 } }
+      \cs_set:Npn \hindi   * { \int_set:Nn \l__poem_digit_base_int { "0660 } \__poem_digits:nn { } { #1 } }
+      \cs_set:Npn \persian * { \int_set:Nn \l__poem_digit_base_int { "06F0 } \__poem_digits:nn { } { #1 } }
+      \tl_use:N \l__poem_numfmt_tl
+    \group_end:
+  }
+
+% The number of the current verse if it has to be shown, in a zero-width box
+% hanging out of the poem at the end of the line (or at the start).
+\cs_new_protected:Npn \__poem_number_box:
+  {
+    \int_compare:nNnT { \l__poem_numbering_int } > { 0 }
+      {
+        \int_compare:nNnT
+          { \int_mod:nn { \l__poem_count_int } { \l__poem_numbering_int } } = { 0 }
+          {
+            \str_if_eq:VnTF \l__poem_numpos_str { end }
+              {
+                \hbox_overlap_right:n
+                  { \hspace* { \l__poem_numsep_dim } \__poem_number:n { \l__poem_count_int } }
+              }
+              {
+                \hbox_overlap_left:n
+                  { \__poem_number:n { \l__poem_count_int } \hspace* { \l__poem_numsep_dim } }
+              }
+          }
+      }
+  }
+\cs_new_protected:Npn \__poem_number_at:n #1
+  {
+    \str_if_eq:VnT \l__poem_numpos_str { #1 } { \__poem_number_box: }
+  }
+
+% ---------------------------------------------------------------------------
+% Paragraph settings inside a hemistich / stacked verse
+% ---------------------------------------------------------------------------
+\cs_new_protected:Npn \__poem_align:
+  {
+    \int_set:Nn \hbadness { 10000 } % short lines are stretched on purpose
+    \str_case:Vn \l__poem_align_str
+      {
+        { justify } { \skip_zero:N \parfillskip }
+        { center }
+          {
+            \skip_set:Nn \leftskip  { 0pt plus 1fil }
+            \skip_set:Nn \rightskip { 0pt plus 1fil }
+            \skip_zero:N \parfillskip
+          }
+        { start } { }
+      }
+  }
+
+% One hemistich (or line) in the box #1, with width #2 and text #3.
+\cs_new_protected:Npn \__poem_item:Nnn #1#2#3
+  {
+    \hbox_set:Nn #1
+      {
+        \parbox [ t ] { #2 }
+          {
+            \__poem_align:
+            \noindent #3 \par
+          }
+      }
+    \bool_if:NT \l__poem_strut_bool
+      {
+        % height and depth of a normal line, however tall the diacritics are;
+        % a box of several lines keeps its depth
+        \box_set_ht:Nn #1 { \box_ht:N \strutbox }
+        \dim_compare:nNnT { \box_dp:N #1 } < { \baselineskip }
+          { \box_set_dp:Nn #1 { \box_dp:N \strutbox } }
+      }
+  }
+
+% A line of the poem: the material #1, centred in the full line width.
+\cs_new_protected:Npn \__poem_row:n #1
+  {
+    \noindent
+    \hbox_to_wd:nn { \linewidth } { \hfil #1 \hfil }
+    \par
+  }
+% The same, carrying the verse number.
+\cs_new_protected:Npn \__poem_row_num:n #1
+  {
+    \noindent
+    \hbox_to_wd:nn { \linewidth }
+      { \hfil \__poem_number_at:n { start } #1 \__poem_number_at:n { end } \hfil }
+    \par
+  }
+
+\cs_new_protected:Npn \__poem_gap:
+  {
+    \hbox_to_wd:nn { \l__poem_gap_dim } { \hfil \l__poem_ornament_tl \hfil }
+  }
+
+% ---------------------------------------------------------------------------
+% One verse
+% ---------------------------------------------------------------------------
+\cs_new_protected:Npn \__poem_bayt:nn #1#2
+  {
+    \int_incr:N \l__poem_count_int
+    \int_compare:nNnF { \l__poem_count_int } = { 1 }
+      {
+        \bool_if:NT \l__poem_keep_bool { \nopagebreak }
+        \vskip \l__poem_versesep_tl
+      }
+    \str_if_eq:VnTF \l__poem_layout_str { hemistichs }
+      {
+        % both hemistichs on one line
+        \__poem_item:Nnn \l__poem_a_box { \l__poem_hw_dim } { #1 }
+        \__poem_item:Nnn \l__poem_b_box { \l__poem_hw_dim } { #2 }
+        \bool_if:NTF \l__poem_swap_bool
+          {
+            \__poem_row_num:n
+              {
+                \box_use_drop:N \l__poem_b_box
+                \__poem_gap:
+                \box_use_drop:N \l__poem_a_box
+              }
+          }
+          {
+            \__poem_row_num:n
+              {
+                \box_use_drop:N \l__poem_a_box
+                \__poem_gap:
+                \box_use_drop:N \l__poem_b_box
+              }
+          }
+      }
+      {
+        % two lines, one above the other; the verse is not split by a page break
+        \__poem_item:Nnn \l__poem_a_box { \l__poem_w_dim } { #1 }
+        \__poem_item:Nnn \l__poem_b_box { \l__poem_w_dim } { #2 }
+        \__poem_row:n { \box_use_drop:N \l__poem_a_box }
+        \nopagebreak
+        \__poem_row_num:n { \box_use_drop:N \l__poem_b_box }
+      }
+  }
+
+% ---------------------------------------------------------------------------
+% The environment:  \begin{arabpoem}[options]  \bayt{first}{second} ...
+% ---------------------------------------------------------------------------
+\NewDocumentEnvironment { arabpoem } { O{} }
+  {
+    \keys_set:nn { arabpoem } { #1 }
+    \int_zero:N \l__poem_count_int
+    \mode_if_horizontal:T { \par }
+    \dim_compare:nNnTF { \l__poem_width_dim } = { 0pt }
+      { \dim_set_eq:NN \l__poem_w_dim \linewidth }
+      { \dim_set_eq:NN \l__poem_w_dim \l__poem_width_dim }
+    \dim_set:Nn \l__poem_hw_dim { ( \l__poem_w_dim - \l__poem_gap_dim ) / 2 }
+    \setlength { \parskip } { 0pt }
+    \cs_set_eq:NN \bayt \__poem_bayt:nn
+    \cs_set_protected:Npn \stanzabreak { \vskip \l__poem_stanzasep_tl }
+    \ignorespaces
+  }
+  {
+    \par
+  }
+
+\ExplSyntaxOff
+\endinput

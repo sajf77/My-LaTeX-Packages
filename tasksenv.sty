@@ -1,0 +1,381 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{tasksenv}[2026/09/20 Custom tasks environment]
+
+\RequirePackage{expl3}
+\RequirePackage{l3keys2e}
+
+\ExplSyntaxOn
+
+% ---------------------------------------------------------------------------
+% Variables
+% ---------------------------------------------------------------------------
+\int_new:N  \l__tasks_cols_int        % columns per row (block mode)
+\int_new:N  \l__tasks_pos_int         % columns already used in the current row
+\int_new:N  \l__tasks_num_int         % number of the current item
+\int_new:N  \l__tasks_open_int        % 0: no item open, 1: column box, 3: list item
+\bool_new:N \l__tasks_inline_bool     % `inline' given?
+\bool_new:N \l__tasks_cols_set_bool   % number of columns given?
+\bool_new:N \l__tasks_row_bool        % is a row of column boxes open?
+\dim_new:N  \l__tasks_gap_dim         % gutter between neighbouring columns
+\dim_new:N  \l__tasks_width_dim       % width of one column
+\dim_new:N  \l__tasks_hang_dim        % width of a label plus the space after it
+\dim_new:N  \l__tasks_text_dim        % width of the text part of an item
+\dim_new:N  \l__tasks_labelw_dim      % width of a label
+\dim_new:N  \l__tasks_lsep_dim        % width of the space after a label
+\dim_new:N  \l__tasks_extra_dim       % extra space below a deep last row
+\box_new:N  \l__tasks_label_box
+\tl_new:N   \l__tasks_label_tl        % label template of the running environment
+\tl_new:N   \l__tasks_spacing_tl      % row-spacing factor of the running environment
+\tl_new:N   \l__tasks_labelsep_tl     % space after the label (default 0.85em)
+\tl_new:N   \l__tasks_default_label_tl    % defaults, see \tasksetup
+\tl_new:N   \l__tasks_default_spacing_tl
+\tl_new:N   \l__tasks_default_labelsep_tl
+
+% ---------------------------------------------------------------------------
+% Package options and \tasksetup
+%   label=<template>     default label; empty = ($\alph*$) (block) or
+%                        (\arabic*) (inline)
+%   spacing=<factor>     distance between rows = <factor> * \baselineskip
+%   labelsep=<length>    space between label and text (alias: spaceafterlabel);
+%                        default 0.85em, empty = a normal interword space
+% ---------------------------------------------------------------------------
+\keys_define:nn { tasksenv }
+  {
+    label            .tl_set:N  = \l__tasks_default_label_tl ,
+    label            .initial:n = { } ,
+    spacing          .tl_set:N  = \l__tasks_default_spacing_tl ,
+    spacing          .initial:n = 1 ,
+    labelsep         .tl_set:N  = \l__tasks_default_labelsep_tl ,
+    labelsep         .initial:n = { 0.85em } ,
+    spaceafterlabel  .tl_set:N  = \l__tasks_default_labelsep_tl ,
+  }
+\ProcessKeysPackageOptions { tasksenv }
+
+% Use \tasksetup, not the package option, for a label containing \alph*,
+% \arabic*, ...: LaTeX expands package options before this file sees them.
+\NewDocumentCommand { \tasksetup } { m }
+  {
+    \keys_set:nn { tasksenv } { #1 }
+  }
+\NewDocumentCommand { \tasksspacing } { m }
+  {
+    \tl_set:Nn \l__tasks_default_spacing_tl { #1 }
+  }
+
+% ---------------------------------------------------------------------------
+% Options of the environment:  \begin{tasks}[3, label=\Alph*.]
+%   <number> / cols=<number>   number of columns (default 2)
+%   label=<template>           \alph* \Alph* \arabic* \roman* \Roman* \fnsymbol*
+%   spacing=<factor>           row spacing
+%   labelsep=<length>          space between label and text (default: 0.85em;
+%                              empty = a normal space); `spaceafterlabel' is
+%                              an alias
+%   inline                     run the tasks inline with the text
+% ---------------------------------------------------------------------------
+\keys_define:nn { tasksenv / env }
+  {
+    cols             .code:n = { \int_set:Nn \l__tasks_cols_int { #1 }
+                                 \bool_set_true:N \l__tasks_cols_set_bool } ,
+    label            .tl_set:N   = \l__tasks_label_tl ,
+    spacing          .tl_set:N   = \l__tasks_spacing_tl ,
+    labelsep         .tl_set:N   = \l__tasks_labelsep_tl ,
+    spaceafterlabel  .tl_set:N   = \l__tasks_labelsep_tl ,
+    inline           .bool_set:N = \l__tasks_inline_bool ,
+    unknown          .code:n     = { \__tasks_unknown_key: } ,
+  }
+
+% A key without `=' that is a plain number is the number of columns;
+% anything else is a mistake and gets a proper error message.
+\cs_new_protected:Npn \__tasks_unknown_key:
+  {
+    \regex_match:nVTF { \A [0-9]+ \Z } \l_keys_key_str
+      {
+        \int_set:Nn \l__tasks_cols_int { \l_keys_key_str }
+        \bool_set_true:N \l__tasks_cols_set_bool
+      }
+      { \msg_error:nnx { tasksenv } { unknown-option } { \l_keys_key_str } }
+  }
+
+\msg_new:nnnn { tasksenv } { unknown-option }
+  { Unknown~option~'#1'~for~the~tasks~environment. }
+  {
+    Valid~options~are:~a~number~of~columns~(or~'cols='),~'inline',~
+    'label=',~'labelsep='~(alias~'spaceafterlabel=')~and~'spacing='.
+  }
+
+\msg_new:nnnn { tasksenv } { inline-cols }
+  { The~'inline'~option~cannot~be~combined~with~a~number~of~columns. }
+  {
+    An~inline~task~list~runs~with~the~text~and~has~no~columns.~
+    Remove~either~'inline'~or~the~column~number~(or~'cols=').
+  }
+
+% ---------------------------------------------------------------------------
+% Labels.  As in enumitem, `\alph*', `\Alph*', `\arabic*', `\roman*',
+% `\Roman*' and `\fnsymbol*' stand for the item number in that style.
+% ---------------------------------------------------------------------------
+\cs_new_protected:Npn \__tasks_label:n #1
+  {
+    \group_begin:
+      \cs_set:Npn \alph      * { \int_to_alph:n    { #1 } }
+      \cs_set:Npn \Alph      * { \int_to_Alph:n    { #1 } }
+      \cs_set:Npn \arabic    * { \int_to_arabic:n  { #1 } }
+      \cs_set:Npn \roman     * { \int_to_roman:n   { #1 } }
+      \cs_set:Npn \Roman     * { \int_to_Roman:n   { #1 } }
+      \cs_set:Npn \fnsymbol  * { \use:c { @fnsymbol } { #1 } }
+      \tl_use:N \l__tasks_label_tl
+    \group_end:
+  }
+
+% The space between a label and its text: the value of `labelsep' (any
+% length, e.g. 0pt, .5em, 3pt plus 1pt); if empty, a normal interword space.
+\cs_new_protected:Npn \__tasks_labelsep:
+  {
+    \tl_if_empty:NTF \l__tasks_labelsep_tl
+      { \space }
+      { \hskip \l__tasks_labelsep_tl \scan_stop: }
+  }
+
+% ---------------------------------------------------------------------------
+% Block mode.  \task does not collect its text: it closes the previous item
+% and opens the new one, so the text simply follows \task in the source.
+% Because of this, tasks environments can be nested and the text of an item
+% may contain anything (lists, verbatim, another tasks, ...).
+%
+% There are two kinds of items:
+%  * column items (2 or more columns):  \hbox{ label \vtop{ text } }, laid
+%    side by side in a row.  A box cannot be broken across pages.
+%  * line items (`cols=1' and \task*):  a real LaTeX list item, so the text
+%    is free to break across pages and nested lists behave as usual.
+%
+% Assignments to the counters are always made before an item is opened and
+% after the previous one is closed, so that they are not lost with a group.
+% ---------------------------------------------------------------------------
+
+% Extra vertical space between rows: (spacing - 1) baselines.
+\cs_new_protected:Npn \__tasks_gap:
+  {
+    \int_compare:nNnF { \l__tasks_num_int } = { 1 }
+      {
+        \fp_compare:nNnF { \l__tasks_spacing_tl } = { 1 }
+          {
+            \vskip
+              \fp_to_dim:n { ( \l__tasks_spacing_tl - 1 ) * \baselineskip }
+          }
+      }
+  }
+
+\cs_new_protected:Npn \__tasks_startrow:
+  {
+    \noindent
+    \bool_set_true:N \l__tasks_row_bool
+    \int_zero:N \l__tasks_pos_int
+  }
+
+% End the row.  While its line is added to the page, \lineskiplimit is raised
+% to .15 baselines: otherwise, when a tall row only just fits the normal
+% baseline distance, TeX leaves almost no space to the line above (and below)
+% it, and a slightly taller row suddenly gets \lineskip.  Now the gap is never
+% smaller than that, while ordinary rows keep the normal line spacing.
+\cs_new_protected:Npn \__tasks_endrow:
+  {
+    \bool_if:NT \l__tasks_row_bool
+      {
+        \group_begin:
+          \dim_set:Nn \lineskiplimit { .15 \baselineskip }
+          \par
+        \group_end:
+        \bool_set_false:N \l__tasks_row_bool
+      }
+  }
+
+% Close the item that is still open (if any).
+\cs_new_protected:Npn \__tasks_close:
+  {
+    \int_compare:nNnT { \l__tasks_open_int } > { 0 }
+      {
+        \int_compare:nNnTF { \l__tasks_open_int } = { 3 }
+          {
+            \endlist        % the list of a line item
+            \group_end:
+          }
+          {
+            \c_group_end_token % the \vtop with the text
+            \c_group_end_token % the \hbox with label and text
+            \nobreak \hskip \l__tasks_gap_dim
+          }
+        \int_zero:N \l__tasks_open_int
+      }
+  }
+
+% Open a column item; #1 = total width of the item.  This is the last thing
+% done for an item, the box stays open until the next \task.
+\cs_new_protected:Npn \__tasks_open_box:n #1
+  {
+    \hbox_set:Nn \l__tasks_label_box
+      { \__tasks_label:n { \l__tasks_num_int } \__tasks_labelsep: }
+    \dim_set:Nn \l__tasks_hang_dim { \box_wd:N \l__tasks_label_box }
+    \dim_set:Nn \l__tasks_text_dim { #1 - \l__tasks_hang_dim }
+    \tex_hbox:D \c_group_begin_token
+      \box_use_drop:N \l__tasks_label_box
+      \tex_vtop:D \c_group_begin_token
+        \dim_set:Nn \hsize { \l__tasks_text_dim }
+        \use:c { @parboxrestore }
+        \ignorespaces
+  }
+
+% Open a line item: a one-item list whose label is as wide as the label, so
+% the text hangs under itself.  Also the last thing done for an item.
+\cs_new_protected:Npn \__tasks_open_list:
+  {
+    \hbox_set:Nn \l__tasks_label_box
+      { \__tasks_label:n { \l__tasks_num_int } }
+    \dim_set:Nn \l__tasks_labelw_dim { \box_wd:N \l__tasks_label_box }
+    \hbox_set:Nn \l__tasks_label_box { \__tasks_labelsep: }
+    \dim_set:Nn \l__tasks_lsep_dim { \box_wd:N \l__tasks_label_box }
+    \group_begin:
+    \list { }
+      {
+        \dim_set:Nn \labelwidth { \l__tasks_labelw_dim }
+        \dim_set:Nn \labelsep   { \l__tasks_lsep_dim }
+        \dim_set:Nn \leftmargin { \l__tasks_labelw_dim + \l__tasks_lsep_dim }
+        \setlength { \topsep }     { 0pt }
+        \setlength { \partopsep }  { 0pt }
+        \setlength { \parsep }     { 0pt }
+        \setlength { \itemsep }    { 0pt }
+        \cs_set_eq:Nc \makelabel { @firstofone }
+      }
+    \item [ \__tasks_label:n { \l__tasks_num_int } ]
+  }
+
+\cs_new_protected:Npn \__tasks_block_item:N #1
+  {
+    \__tasks_close:
+    \int_incr:N \l__tasks_num_int
+    \bool_if:nTF { #1 || \int_compare_p:nNn { \l__tasks_cols_int } = { 1 } }
+      {
+        % \task* or a single column: an item that gets whole lines
+        \__tasks_endrow:
+        \__tasks_gap:
+        \int_set:Nn \l__tasks_open_int { 3 }
+        \__tasks_open_list:
+      }
+      {
+        % \task: next free column, wrapping when the row is full
+        \bool_if:NTF \l__tasks_row_bool
+          {
+            \int_compare:nNnF { \l__tasks_pos_int } < { \l__tasks_cols_int }
+              {
+                \__tasks_endrow:
+                \__tasks_gap:
+                \__tasks_startrow:
+              }
+          }
+          {
+            \__tasks_gap:
+            \__tasks_startrow:
+          }
+        \int_incr:N \l__tasks_pos_int
+        \int_set:Nn \l__tasks_open_int { 1 }
+        \__tasks_open_box:n { \l__tasks_width_dim - \l__tasks_gap_dim }
+      }
+  }
+
+% ---------------------------------------------------------------------------
+% Inline mode: label, space, text; items separated by \hfil.
+% ---------------------------------------------------------------------------
+\cs_new_protected:Npn \__tasks_inline_item:
+  {
+    \int_incr:N \l__tasks_num_int
+    \int_compare:nNnF { \l__tasks_num_int } = { 1 }
+      { \unskip \hfil }
+    \__tasks_label:n { \l__tasks_num_int } \nobreak \__tasks_labelsep:
+    \ignorespaces
+  }
+
+% \task and \task*
+\cs_new_protected:Npn \__tasks_task:
+  {
+    \peek_charcode_remove:NTF *
+      { \__tasks_dispatch:N \c_true_bool }
+      { \__tasks_dispatch:N \c_false_bool }
+  }
+\cs_new_protected:Npn \__tasks_dispatch:N #1
+  {
+    \bool_if:NTF \l__tasks_inline_bool
+      { \__tasks_inline_item: }         % a star means nothing inline
+      { \__tasks_block_item:N #1 }
+  }
+
+% ---------------------------------------------------------------------------
+% The environment
+% ---------------------------------------------------------------------------
+\NewDocumentEnvironment { tasks } { O{} }
+  {
+    \int_set:Nn \l__tasks_cols_int { 2 }
+    \int_zero:N \l__tasks_pos_int
+    \int_zero:N \l__tasks_num_int
+    \int_zero:N \l__tasks_open_int
+    \bool_set_false:N \l__tasks_inline_bool
+    \bool_set_false:N \l__tasks_cols_set_bool
+    \bool_set_false:N \l__tasks_row_bool
+    \tl_set_eq:NN \l__tasks_label_tl    \l__tasks_default_label_tl
+    \tl_set_eq:NN \l__tasks_spacing_tl  \l__tasks_default_spacing_tl
+    \tl_set_eq:NN \l__tasks_labelsep_tl \l__tasks_default_labelsep_tl
+    \keys_set:nn { tasksenv / env } { #1 }
+    \bool_if:nT { \l__tasks_inline_bool && \l__tasks_cols_set_bool }
+      { \msg_error:nn { tasksenv } { inline-cols } }
+    \int_set:Nn \l__tasks_cols_int { \int_max:nn { 1 } { \l__tasks_cols_int } }
+    \tl_if_empty:NT \l__tasks_label_tl
+      {
+        \bool_if:NTF \l__tasks_inline_bool
+          { \tl_set:Nn \l__tasks_label_tl { ( \arabic * ) } }
+          { \tl_set:Nn \l__tasks_label_tl { ($ \alph * $ ) } }
+      }
+    \cs_set_protected:Npn \task { \__tasks_task: } % local to the environment
+    % all inline math inside the environment is set in display style
+    \tex_everymath:D \exp_after:wN
+      { \tex_the:D \tex_everymath:D \displaystyle }
+    \bool_if:NTF \l__tasks_inline_bool
+      {
+        \ignorespaces
+      }
+      {
+        \dim_set:Nn \l__tasks_gap_dim   { 1em }
+        \dim_set:Nn \l__tasks_width_dim { \linewidth / \l__tasks_cols_int }
+        \setlength { \parskip } { 0pt } % no extra gap between rows
+        \setlength { \lineskip } { .3 \baselineskip } % tall boxes never touch
+        \mode_if_horizontal:T { \par }  % always start on a fresh line
+        \ignorespaces
+      }
+  }
+  {
+    \bool_if:NTF \l__tasks_inline_bool
+      {
+        \mode_if_horizontal:T { \unskip }
+      }
+      {
+        \__tasks_close:
+        \__tasks_endrow:
+        \par
+        % A tall last row or item (integral limits, fractions, ...) has a large
+        % depth, and the line after the environment would then only get
+        % \lineskip, i.e. almost touch it.  So the depth beyond that of an
+        % ordinary line is turned into space (at most .4 baselines) and the
+        % bottom is treated like the bottom of a normal line of text; ordinary
+        % rows are left alone.
+        \mode_if_vertical:T
+          {
+            \dim_compare:nNnT { \prevdepth } > { \box_dp:N \strutbox }
+              {
+                \dim_set:Nn \l__tasks_extra_dim
+                  { \dim_min:nn { .4 \baselineskip } { \prevdepth - \box_dp:N \strutbox } }
+                \dim_set:Nn \prevdepth { \box_dp:N \strutbox }
+                \vskip \l__tasks_extra_dim
+              }
+          }
+      }
+  }
+
+\ExplSyntaxOff
+\endinput

@@ -1,0 +1,211 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{autoparen}[2026/06/18 v26.0 Auto scalable delimiters in math mode]
+\RequirePackage{mleftright}
+\makeatletter
+\newif\ifAutoParenEnabled
+\AutoParenEnabledtrue
+\let\AutoParen@orig@lbrace\{
+\let\AutoParen@orig@rbrace\}
+\newcount\AutoParen@mc@lp
+\newcount\AutoParen@mc@rp
+\newcount\AutoParen@mc@lb
+\newcount\AutoParen@mc@rb
+\def\AutoParenL{\mleft\delimiter"4028300\relax}
+\def\AutoParenR{\mright\delimiter"5029301\relax}
+\def\AutoBracketL{\mleft\delimiter"405B302\relax}
+\def\AutoBracketR{\mright\delimiter"505D303\relax}
+\def\AutoBraceL{\mleft\delimiter"4266308\relax}
+\def\AutoBraceR{\mright\delimiter"5267309\relax}
+\def\AutoParenNormalL{\mathchar"4028\relax}
+\def\AutoParenNormalR{\mathchar"5029\relax}
+\def\AutoBracketNormalL{\mathchar"405B\relax}
+\def\AutoBracketNormalR{\mathchar"505D\relax}
+\def\AutoBraceNormalL{\AutoParen@orig@lbrace}
+\def\AutoBraceNormalR{\AutoParen@orig@rbrace}
+\begingroup
+\catcode`\(=\active
+\catcode`\)=\active
+\catcode`\[=\active
+\catcode`\]=\active
+\gdef({\ifAutoParenEnabled\AutoParenL\else\AutoParenNormalL\fi}%
+\gdef){\ifAutoParenEnabled\AutoParenR\else\AutoParenNormalR\fi}%
+\gdef[{\ifAutoParenEnabled\AutoBracketL\else\AutoBracketNormalL\fi}%
+\gdef]{\ifAutoParenEnabled\AutoBracketR\else\AutoBracketNormalR\fi}%
+\endgroup
+\def\AutoParenActivate{%
+  \mathcode`\(="8000\relax
+  \mathcode`\)="8000\relax
+  \mathcode`\[="8000\relax
+  \mathcode`\]="8000\relax
+}
+\def\AutoParenDeactivate{%
+  \mathcode`\(="4028\relax
+  \mathcode`\)="5029\relax
+  \mathcode`\[="405B\relax
+  \mathcode`\]="505D\relax
+}
+\def\AutoParenApply{\ifAutoParenEnabled\AutoParenActivate\else\AutoParenDeactivate\fi}
+\def\AutoParenOn{\AutoParenEnabledtrue\ifmmode\AutoParenActivate\fi}
+\def\AutoParenOff{\AutoParenEnabledfalse\ifmmode\AutoParenDeactivate\fi}
+\let\autoparenon\AutoParenOn
+\let\autoparenoff\AutoParenOff
+\DeclareRobustCommand{\{}{%
+  \ifmmode
+    \ifAutoParenEnabled\AutoBraceL\else\AutoParen@orig@lbrace\fi
+  \else
+    \AutoParen@orig@lbrace
+  \fi
+}
+\DeclareRobustCommand{\}}{%
+  \ifmmode
+    \ifAutoParenEnabled\AutoBraceR\else\AutoParen@orig@rbrace\fi
+  \else
+    \AutoParen@orig@rbrace
+  \fi
+}
+\DeclareRobustCommand{\lp}{\AutoParenNormalL}
+\DeclareRobustCommand{\rp}{\AutoParenNormalR}
+\DeclareRobustCommand{\lb}{\AutoBracketNormalL}
+\DeclareRobustCommand{\rb}{\AutoBracketNormalR}
+\DeclareRobustCommand{\lw}{\AutoBraceNormalL}
+\DeclareRobustCommand{\rw}{\AutoBraceNormalR}
+\newenvironment{rawparen}{\begingroup\AutoParenOff}{\endgroup}
+\def\AutoParen@LocalOff{\AutoParenEnabledfalse\ifmmode\AutoParenDeactivate\fi}
+\def\AutoParen@LocalOn{\AutoParenEnabledtrue\ifmmode\AutoParenActivate\fi}
+\def\AutoParen@WithDelimiter#1#2{\ifAutoParenEnabled\AutoParen@LocalOff#1#2\AutoParen@LocalOn\else#1#2\fi}
+\def\AutoParen@WithBigOpen#1#2{\mathopen{\ifAutoParenEnabled\AutoParen@LocalOff#1#2\AutoParen@LocalOn\else#1#2\fi}}
+\def\AutoParen@WithBigClose#1#2{\mathclose{\ifAutoParenEnabled\AutoParen@LocalOff#1#2\AutoParen@LocalOn\else#1#2\fi}}
+\def\AutoParen@WithBigRel#1#2{\mathrel{\ifAutoParenEnabled\AutoParen@LocalOff#1#2\AutoParen@LocalOn\else#1#2\fi}}
+\def\AutoParen@WithBigOrd#1#2{{\ifAutoParenEnabled\AutoParen@LocalOff#1#2\AutoParen@LocalOn\else#1#2\fi}}
+\def\AutoParen@PatchLeftRight{%
+  \let\AutoParen@orig@left\left
+  \let\AutoParen@orig@right\right
+  \def\left##1{\AutoParen@WithDelimiter\AutoParen@orig@left{##1}}%
+  \def\right##1{\AutoParen@WithDelimiter\AutoParen@orig@right{##1}}%
+  \ifdefined\middle
+    \let\AutoParen@orig@middle\middle
+    \def\middle##1{\AutoParen@WithDelimiter\AutoParen@orig@middle{##1}}%
+  \fi
+}
+\def\AutoParen@PatchBigFamily{%
+  \let\AutoParen@orig@big\big
+  \let\AutoParen@orig@Big\Big
+  \let\AutoParen@orig@bigg\bigg
+  \let\AutoParen@orig@Bigg\Bigg
+  \def\big##1{\AutoParen@WithBigOrd\AutoParen@orig@big{##1}}%
+  \def\Big##1{\AutoParen@WithBigOrd\AutoParen@orig@Big{##1}}%
+  \def\bigg##1{\AutoParen@WithBigOrd\AutoParen@orig@bigg{##1}}%
+  \def\Bigg##1{\AutoParen@WithBigOrd\AutoParen@orig@Bigg{##1}}%
+  \def\bigl##1{\AutoParen@WithBigOpen\AutoParen@orig@big{##1}}%
+  \def\bigr##1{\AutoParen@WithBigClose\AutoParen@orig@big{##1}}%
+  \def\bigm##1{\AutoParen@WithBigRel\AutoParen@orig@big{##1}}%
+  \def\Bigl##1{\AutoParen@WithBigOpen\AutoParen@orig@Big{##1}}%
+  \def\Bigr##1{\AutoParen@WithBigClose\AutoParen@orig@Big{##1}}%
+  \def\Bigm##1{\AutoParen@WithBigRel\AutoParen@orig@Big{##1}}%
+  \def\biggl##1{\AutoParen@WithBigOpen\AutoParen@orig@bigg{##1}}%
+  \def\biggr##1{\AutoParen@WithBigClose\AutoParen@orig@bigg{##1}}%
+  \def\biggm##1{\AutoParen@WithBigRel\AutoParen@orig@bigg{##1}}%
+  \def\Biggl##1{\AutoParen@WithBigOpen\AutoParen@orig@Bigg{##1}}%
+  \def\Biggr##1{\AutoParen@WithBigClose\AutoParen@orig@Bigg{##1}}%
+  \def\Biggm##1{\AutoParen@WithBigRel\AutoParen@orig@Bigg{##1}}%
+}
+
+
+
+% --- TikZ safe mode ----------------------------------------------------------
+% TikZ のパス・座標・PGF 計算中では自動括弧を止める．
+% ただし node 本文中では一時的に戻すので，
+%   \node at (0,0) {$ (\frac{1}{x}+1) $};
+% のような数式では自動括弧が効く．
+% hiddennote の \memo 内に tikzpicture を入れる場合も，
+% \memo 専用のパッチではなく，TikZ 全体の安全処理として働く．
+\newcount\AutoParen@tikz@level
+\newif\ifAutoParen@tikz@restoreenabled
+\def\AutoParen@TikZPictureBegin{%
+  \ifnum\AutoParen@tikz@level=0\relax
+    \ifAutoParenEnabled
+      \AutoParen@tikz@restoreenabledtrue
+    \else
+      \AutoParen@tikz@restoreenabledfalse
+    \fi
+  \fi
+  \advance\AutoParen@tikz@level by 1\relax
+  \AutoParenEnabledfalse
+  \ifmmode\AutoParenDeactivate\fi
+}
+\def\AutoParen@TikZPictureEnd{%
+  \ifnum\AutoParen@tikz@level>0\relax
+    \advance\AutoParen@tikz@level by -1\relax
+  \fi
+  \ifnum\AutoParen@tikz@level=0\relax
+    \ifAutoParen@tikz@restoreenabled
+      \AutoParenEnabledtrue
+      \ifmmode\AutoParenActivate\fi
+    \else
+      \AutoParenEnabledfalse
+      \ifmmode\AutoParenDeactivate\fi
+    \fi
+  \else
+    \AutoParenEnabledfalse
+    \ifmmode\AutoParenDeactivate\fi
+  \fi
+}
+\def\AutoParen@TikZNodeBegin{%
+  \ifnum\AutoParen@tikz@level>0\relax
+    \ifAutoParen@tikz@restoreenabled
+      \AutoParenEnabledtrue
+      \ifmmode\AutoParenActivate\fi
+    \fi
+  \fi
+}
+\def\AutoParen@TikZNodeEnd{%
+  \ifnum\AutoParen@tikz@level>0\relax
+    \AutoParenEnabledfalse
+    \ifmmode\AutoParenDeactivate\fi
+  \fi
+}
+\def\AutoParen@PatchTikZ{%
+  \@ifundefined{tikzset}{}{%
+    \tikzset{%
+      every picture/.append style={%
+        execute at begin picture={\AutoParen@TikZPictureBegin},%
+        execute at end picture={\AutoParen@TikZPictureEnd}%
+      },%
+      every node/.append style={%
+        execute at begin node={\AutoParen@TikZNodeBegin},%
+        execute at end node={\AutoParen@TikZNodeEnd}%
+      }%
+    }%
+  }%
+}
+
+\def\AutoParen@PatchAmsMathstrut{%
+  \@ifundefined{resetMathstrut@}{}{%
+    \let\AutoParen@orig@resetMathstrut@\resetMathstrut@
+    \def\resetMathstrut@{%
+      \AutoParen@mc@lp=\mathcode`\(\relax
+      \AutoParen@mc@rp=\mathcode`\)\relax
+      \AutoParen@mc@lb=\mathcode`\[\relax
+      \AutoParen@mc@rb=\mathcode`\]\relax
+      \mathcode`\(="4028\relax
+      \mathcode`\)="5029\relax
+      \mathcode`\[="405B\relax
+      \mathcode`\]="505D\relax
+      \AutoParen@orig@resetMathstrut@
+      \mathcode`\(=\the\AutoParen@mc@lp\relax
+      \mathcode`\)=\the\AutoParen@mc@rp\relax
+      \mathcode`\[=\the\AutoParen@mc@lb\relax
+      \mathcode`\]=\the\AutoParen@mc@rb\relax
+    }%
+  }%
+}
+\AtBeginDocument{%
+  \everymath\expandafter{\the\everymath\AutoParenApply}%
+  \everydisplay\expandafter{\the\everydisplay\AutoParenApply}%
+  \AutoParen@PatchAmsMathstrut
+  \AutoParen@PatchLeftRight
+  \AutoParen@PatchBigFamily
+  \AutoParen@PatchTikZ
+}
+\makeatother
+\endinput
