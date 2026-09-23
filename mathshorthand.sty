@@ -8,9 +8,10 @@
 \begin{luacode*}
 local FRAC_CMDS = { frac = true, dfrac = true, tfrac = true, cfrac = true }
 
--- Spelled Greek letters are accepted directly in math mode.  Uppercase
--- entries are included only where LaTeX provides a distinct command.
-local GREEK_LETTERS = {
+-- Spelled Greek letters and a few common math words are accepted directly in
+-- math mode. Uppercase Greek entries are included only where LaTeX provides
+-- a distinct command.
+local MATH_WORDS = {
   alpha = "\\alpha", beta = "\\beta", gamma = "\\gamma", delta = "\\delta",
   epsilon = "\\epsilon", zeta = "\\zeta", eta = "\\eta", theta = "\\theta",
   iota = "\\iota", kappa = "\\kappa", lambda = "\\lambda", mu = "\\mu",
@@ -22,6 +23,7 @@ local GREEK_LETTERS = {
   Gamma = "\\Gamma", Delta = "\\Delta", Theta = "\\Theta", Lambda = "\\Lambda",
   Xi = "\\Xi", Pi = "\\Pi", Sigma = "\\Sigma", Upsilon = "\\Upsilon",
   Phi = "\\Phi", Psi = "\\Psi", Omega = "\\Omega",
+  oo = "\\infty",
 }
 
 local function read_brace_group(s, i)
@@ -124,10 +126,10 @@ local function read_unit_forward(s, i)
     local j = i
     while s:sub(j,j):match("[%w%.]") do j = j + 1 end
     local name = s:sub(i, j - 1)
-    if GREEK_LETTERS[name] then
+    if MATH_WORDS[name] then
       -- Treat the replacement as the base unit so following scripts remain
       -- part of it (e.g. pi^2/6 becomes \frac{\pi^2}{6}).
-      parts = { GREEK_LETTERS[name] }
+      parts = { MATH_WORDS[name] }
       tail = j
     end
     i = j
